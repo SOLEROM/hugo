@@ -34,9 +34,9 @@ OPTIONS:
 
 EXAMPLES:
     hugo                    # Interactive search with fzf
-    hugo wifi              # Search for wifi-related commands
-    hugo --root=/my/docs   # Use custom root directory
-    hugo --list            # List all available help files
+    hugo wifi               # Search for wifi-related commands
+    hugo --root=/my/docs    # Use custom root directory
+    hugo --list             # List all available help files
 
 FILE FORMAT:
     Files should be named h.TOPIC and start with:
@@ -108,7 +108,7 @@ extract_file_info() {
     local file="$1"
     local first_line
     first_line=$(head -n1 "$file" 2>/dev/null)
-    
+
     if [[ $first_line =~ ^#[[:space:]]*(.+) ]]; then
         echo "${BASH_REMATCH[1]}"
     else
@@ -117,33 +117,40 @@ extract_file_info() {
 }
 
 # Function to build the search index
+# Output format (tab-separated):
+#   1) topic (from filename h.topic)
+#   2) description + keywords (for searching)
+#   3) full filepath
 build_search_index() {
-    local temp_file=$(mktemp)
-    
+    local temp_file
+    temp_file=$(mktemp)
+
     # Find all h.* files recursively
     while IFS= read -r -d '' file; do
         local relative_path="${file#$ROOT_DIR/}"
-        local basename=$(basename "$file")
+        local basename
+        basename=$(basename "$file")
         local topic="${basename#h.}"
-        local info=$(extract_file_info "$file")
-        
-        # Split description and keywords
+        local info
+        info=$(extract_file_info "$file")
+
+        local description keywords
         if [[ $info == *"|"* ]]; then
-            local description="${info%%|*}"
-            local keywords="${info##*|}"
+            description="${info%%|*}"
+            keywords="${info##*|}"
             # Clean up whitespace
             description=$(echo "$description" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
             keywords=$(echo "$keywords" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
         else
-            local description="$info"
-            local keywords=""
+            description="$info"
+            keywords=""
         fi
-        
-        # Create searchable line with topic only for display, keep full data for search
+
+        # Line: topic<TAB>(description + keywords)<TAB>filepath
         printf "%s\t%s %s\t%s\n" "$topic" "$description" "$keywords" "$file" >> "$temp_file"
-        
+
     done < <(find "$ROOT_DIR" -name "h.*" -type f -print0 2>/dev/null)
-    
+
     echo "$temp_file"
 }
 
@@ -151,7 +158,7 @@ build_search_index() {
 if [[ $LIST_ONLY == true ]]; then
     echo -e "${BLUE}Available help files in $ROOT_DIR:${NC}"
     echo ""
-    
+
     temp_index=$(build_search_index)
     while IFS=$'\t' read -r topic search_data filepath; do
         echo "  $topic"
@@ -178,6 +185,10 @@ echo "Found $file_count help files" >&2
 # Prepare fzf command
 FZF_OPTS=(
     --delimiter="\t"
+    # Display only the first field (topic) in the main list
+    --with-nth=1
+    # Search on topic (field 1) + description/keywords (field 2)
+    --nth=1,2
     --preview='filepath=$(echo {} | cut -f3); echo "File: $filepath" && echo "==============================================" && head -n 15 "$filepath" 2>/dev/null || echo "Could not read file: $filepath"'
     --preview-window="right:50%:wrap"
     --header="Hugo - Search your help files (Press Enter to select, Ctrl+C to exit)"
@@ -201,12 +212,11 @@ rm -f "$temp_index"
 # If user made a selection, display the file
 if [[ -n "$selected" ]]; then
     filepath=$(echo "$selected" | cut -f3)
-    
+
     echo ""
     echo -e "${GREEN}=== $(basename "$filepath") ===${NC}"
     echo ""
-    
-    # Simply cat the file content
+
     cat "$filepath"
     echo ""
 fi
