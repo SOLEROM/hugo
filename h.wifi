@@ -1,0 +1,5 @@
+# wifi cmds |  wifi connect ; wifi scan 
+sudo nmcli radio wifi on
+sudo nmcli dev wifi list
+sudo nmcli dev wifi connect XXXX ifname wlan0 --ask
+// will store at:  /etc/NetworkManager/system-connections/XXX.nmconnection
