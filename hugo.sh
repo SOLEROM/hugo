@@ -33,7 +33,7 @@ OPTIONS:
 
 EXAMPLES:
     hugo                    # Interactive search with fzf
-    hugo wifi               # Search for wifi-related commands
+    hugo wifi               # Filter by keyword 'wifi'
     hugo --root=/my/docs    # Use custom root directory
     hugo --list             # List all available help files
 
@@ -99,23 +99,25 @@ if ! command -v fzf >/dev/null 2>&1; then
 fi
 
 # Expects first line like:
-#   # descr | keyword1 ; keyword2
+#   # wifi cmds |  wifi connect ; wifi scan
 extract_file_info() {
     local file="$1"
     local first_line
     first_line=$(head -n1 "$file" 2>/dev/null)
 
     if [[ $first_line =~ ^#[[:space:]]*(.+) ]]; then
+        # NOTE: correct var name is BASH_REMATCH
         echo "${BASH_REMATCH[1]}"
     else
         echo "No description available"
     fi
 }
 
+
 # Build index:
 #   1) topic
 #   2) description
-#   3) keywords (exact string after |, including ';')
+#   3) keywords (exact text after |, normalized spaces around ';')
 #   4) filepath
 build_search_index() {
     local temp_file
@@ -182,26 +184,58 @@ if [[ $file_count -eq 0 ]]; then
     exit 1
 fi
 
-echo "Found $file_count help files" >&2
+# If SEARCH_TERM is provided, filter index by keyword column (3)
+if [[ -n "$SEARCH_TERM" ]]; then
+    echo "Filtering by keyword: '$SEARCH_TERM'" >&2
+    filtered_index=$(mktemp)
+
+    awk -v term="$SEARCH_TERM" -F'\t' '
+        BEGIN { IGNORECASE = 1 }
+        {
+            # $3 is the keywords column, e.g. "wifi connect ; wifi scan ; radio"
+            n = split($3, arr, /;/)
+            for (i = 1; i <= n; i++) {
+                gsub(/^[ \t]+|[ \t]+$/, "", arr[i])
+                if (tolower(arr[i]) == tolower(term)) {
+                    print $0
+                    next
+                }
+            }
+        }
+    ' "$temp_index" > "$filtered_index"
+
+    mv "$filtered_index" "$temp_index"
+
+    file_count=$(wc -l < "$temp_index")
+    if [[ $file_count -eq 0 ]]; then
+        echo -e "${YELLOW}No help files match keyword '$SEARCH_TERM'${NC}" >&2
+        rm -f "$temp_index"
+        exit 1
+    fi
+
+    echo "Found $file_count file(s) matching keyword '$SEARCH_TERM'" >&2
+else
+    echo "Found $file_count help files" >&2
+fi
 
 FZF_OPTS=(
     --delimiter=$'\t'
-    # show only topic on the left, but search includes whole line (topic+descr+keywords)
-    --with-nth=1
-    --preview='filepath=$(echo {} | cut -f4); echo "File: $filepath" && echo "==============================================" && head -n 15 "$filepath" 2>/dev/null || echo "Could not read file: $filepath"'
+    # Show topic and description in the list
+    --with-nth=1,2
+    # Search over topic (1), description (2), and keywords (3)
+    --nth=1,2,3
+    --preview='filepath=$(echo {} | cut -f4); echo "File: $filepath" && echo "==============================================" && head -n '"$PREVIEW_LINES"' "$filepath" 2>/dev/null || echo "Could not read file: $filepath"'
     --preview-window="right:50%:wrap"
-    --header="Hugo - Search your help files (topic/descr/keywords; Enter to open)"
+    --header="Hugo - Select help topic (filtered by keyword if given; Enter to open)"
     --prompt="Search > "
     --height=90%
     --border
     --tabstop=4
 )
 
-if [[ -n "$SEARCH_TERM" ]]; then
-    FZF_OPTS+=(--query="$SEARCH_TERM")
-fi
+# We *don’t* pass SEARCH_TERM to fzf here; it was already used as a keyword filter.
 
-selected=$(fzf "${FZF_OPTS[@]}" < "$temp_index")
+selected=$(command fzf "${FZF_OPTS[@]}" < "$temp_index")
 
 rm -f "$temp_index"
 
